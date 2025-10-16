@@ -1,0 +1,30 @@
+# Build artifacts
+build/
+.build/
+DerivedData/
+
+# Xcode user data
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcscmblueprint
+
+# Temporary and log files
+*.log
+*.xcuserstate
+*.bak
+
+# Dependency managers
+Pods/
+Carthage/Build/
+
+# Secrets and sensitive information
+*.p12
+*.mobileprovision
+*.keychain
+Secrets.swift # Example for a file containing secrets
+
+# macOS specific
+.DS_Store
+
+# Swift Package Manager (optional: commit Package.resolved but ignore other .swiftpm contents)
+.swiftpm/xcode/

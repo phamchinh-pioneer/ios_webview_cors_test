@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Local WebView CORS Test</title>
+</head>
+
+<body>
+    <h1>Test CloudFront CORS</h1>
+    <div style="margin-bottom: 20px;">
+        <div style="margin-bottom: 10px;">
+            <label for="httpMethod">HTTP Method:</label>
+            <select id="httpMethod" style="margin-left: 10px; padding: 5px;">
+                <option value="GET">GET</option>
+                <option value="POST">POST</option>
+                <option value="PUT">PUT</option>
+                <option value="DELETE">DELETE</option>
+                <option value="PATCH">PATCH</option>
+                <option value="OPTIONS">OPTIONS</option>
+            </select>
+        </div>
+        <div style="margin-bottom: 10px;">
+            <label for="authHeader">Authorization Header:</label><br>
+            <input type="text" id="authHeader" style="width: 400px; padding: 5px;" placeholder="Bearer your-token-here">
+        </div>
+        <div style="margin-bottom: 10px;">
+            <label for="requestBody">Request Body (for POST/PUT/PATCH):</label><br>
+            <textarea id="requestBody" rows="3" cols="50" placeholder='{"key": "value"}'></textarea>
+        </div>
+        <div style="margin-bottom: 10px;">
+            <button onclick="testCloudFront()">Test CloudFront API</button>
+            <button onclick="testPreflight()">Test CORS Preflight</button>
+            <button onclick="testSimpleRequest()">Test Simple GET (httpbin)</button>
+            <button onclick="clearResults()">Clear Results</button>
+        </div>
+    </div>
+    <pre id="result"
+        style="background: #f5f5f5; padding: 10px; border-radius: 5px; white-space: pre-wrap; word-wrap: break-word;"></pre>
+
+    <script>
+        cfUrl = '<Cloufront URL here>'
+        window.jsCallbackBridge = {
+            promises: {},
+            send: function (url, body = "", method = 'GET', content_type = 'application/json', accept = 'application/json', customHeaders = {}) {
+                return new Promise((resolve, reject) => {
+                    const uuid = crypto.randomUUID();
+                    this.promises[uuid] = { resolve, reject };
+                    window.webkit.messageHandlers.native.postMessage({
+                        type: "SEND_HTTP_REQUEST",
+                        uuid: uuid,
+                        url: url,
+                        body: body,
+                        method: method,
+                        content_type: content_type,
+                        accept: accept,
+                        custom_headers: customHeaders
+                    });
+                });
+            },
+            resolvePromise: function (uuid, responseJson) {
+                if (this.promises[uuid]) {
+                    try {
+                        const response = JSON.parse(responseJson);
+                        this.promises[uuid].resolve(response);
+                    } catch (e) {
+                        // Fallback for old base64 format
+                        const data = atob(responseJson);
+                        this.promises[uuid].resolve({ data: data });
+                    }
+                    delete this.promises[uuid];
+                }
+            },
+            rejectPromise: function (uuid, error) {
+                if (this.promises[uuid]) {
+                    this.promises[uuid].reject(new Error(error));
+                    delete this.promises[uuid];
+                }
+            }
+        };
+
+        async function testCloudFront() {
+            const resultElement = document.getElementById('result');
+            const method = document.getElementById('httpMethod').value;
+            const body = document.getElementById('requestBody').value.trim();
+            const authHeader = document.getElementById('authHeader').value.trim();
+
+            resultElement.textContent = `Making ${method} request...`;
+
+            // Prepare custom headers
+            const customHeaders = {};
+            if (authHeader) {
+                customHeaders['Authorization'] = authHeader;
+            }
+
+            try {
+                const response = await window.jsCallbackBridge.send(
+                    cfUrl,
+                    body,
+                    method,
+                    'application/json',
+                    'application/json',
+                    customHeaders
+                );
+
+                let output = `=== ${method} REQUEST DEBUG INFO ===\n`;
+                output += `Status Code: ${response.statusCode || 'N/A'}\n`;
+                output += `Error: ${response.error || 'None'}\n`;
+                output += `Error Code: ${response.errorCode || 'N/A'}\n\n`;
+
+                output += '=== RESPONSE HEADERS ===\n';
+                if (response.headers) {
+                    for (const [key, value] of Object.entries(response.headers)) {
+                        output += `${key}: ${value}\n`;
+                    }
+                }
+
+                output += '\n=== CORS HEADERS ===\n';
+                if (response.headers) {
+                    const corsHeaders = [
+                        'Access-Control-Allow-Origin',
+                        'Access-Control-Allow-Methods',
+                        'Access-Control-Allow-Headers',
+                        'Access-Control-Allow-Credentials',
+                        'Access-Control-Max-Age'
+                    ];
+
+                    corsHeaders.forEach(header => {
+                        const value = response.headers[header] || response.headers[header.toLowerCase()];
+                        output += `${header}: ${value || 'NOT SET'}\n`;
+                    });
+                }
+
+                output += '\n=== RESPONSE DATA ===\n';
+                if (response.data) {
+                    try {
+                        const decodedData = atob(response.data);
+                        output += decodedData;
+                    } catch (e) {
+                        output += 'Failed to decode response data: ' + e.message;
+                    }
+                } else {
+                    output += 'No response data';
+                }
+
+                resultElement.textContent = output;
+            } catch (err) {
+                resultElement.textContent = 'JavaScript Error: ' + err.message;
+            }
+        }
+
+        async function testPreflight() {
+            const resultElement = document.getElementById('result');
+            resultElement.textContent = 'Testing CORS preflight (OPTIONS request)...';
+
+            try {
+                const response = await window.jsCallbackBridge.send(
+                    cfUrl,
+                    '',
+                    'OPTIONS'
+                );
+
+                let output = '=== PREFLIGHT OPTIONS REQUEST ===\n';
+                output += `Status Code: ${response.statusCode || 'N/A'}\n`;
+                output += `Error: ${response.error || 'None'}\n\n`;
+
+                output += '=== PREFLIGHT RESPONSE HEADERS ===\n';
+                if (response.headers) {
+                    for (const [key, value] of Object.entries(response.headers)) {
+                        output += `${key}: ${value}\n`;
+                    }
+                }
+
+                resultElement.textContent = output;
+            } catch (err) {
+                resultElement.textContent = 'Preflight Error: ' + err.message;
+            }
+        }
+
+        async function testSimpleRequest() {
+            const resultElement = document.getElementById('result');
+            const method = document.getElementById('httpMethod').value;
+            const body = document.getElementById('requestBody').value.trim();
+
+            resultElement.textContent = `Testing ${method} request with httpbin...`;
+
+            // Map HTTP methods to httpbin endpoints
+            const httpbinEndpoints = {
+                'GET': 'https://httpbin.org/get',
+                'POST': 'https://httpbin.org/post',
+                'PUT': 'https://httpbin.org/put',
+                'DELETE': 'https://httpbin.org/delete',
+                'PATCH': 'https://httpbin.org/patch',
+                'OPTIONS': 'https://httpbin.org/get' // httpbin doesn't have dedicated OPTIONS endpoint
+            };
+
+            const url = httpbinEndpoints[method] || 'https://httpbin.org/get';
+
+            try {
+                const response = await window.jsCallbackBridge.send(url, body, method);
+
+                let output = `=== ${method} REQUEST (httpbin.org) ===\n`;
+                output += `URL: ${url}\n`;
+                output += `Status Code: ${response.statusCode || 'N/A'}\n`;
+                output += `Error: ${response.error || 'None'}\n\n`;
+
+                output += '=== RESPONSE HEADERS ===\n';
+                if (response.headers) {
+                    for (const [key, value] of Object.entries(response.headers)) {
+                        output += `${key}: ${value}\n`;
+                    }
+                }
+
+                output += '\n=== CORS HEADERS ===\n';
+                if (response.headers) {
+                    const corsHeaders = [
+                        'Access-Control-Allow-Origin',
+                        'Access-Control-Allow-Methods',
+                        'Access-Control-Allow-Headers'
+                    ];
+
+                    corsHeaders.forEach(header => {
+                        const value = response.headers[header] || response.headers[header.toLowerCase()];
+                        output += `${header}: ${value || 'NOT SET'}\n`;
+                    });
+                }
+
+                output += '\n=== RESPONSE DATA ===\n';
+                if (response.data) {
+                    try {
+                        const decodedData = atob(response.data);
+                        output += decodedData;
+                    } catch (e) {
+                        output += 'Failed to decode response data: ' + e.message;
+                    }
+                }
+
+                resultElement.textContent = output;
+            } catch (err) {
+                resultElement.textContent = 'Simple Request Error: ' + err.message;
+            }
+        }
+
+        function clearResults() {
+            document.getElementById('result').textContent = '';
+        }
+    </script>
+</body>
+
+</html>
